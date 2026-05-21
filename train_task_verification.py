@@ -16,7 +16,7 @@ import seaborn as sns
 
 from extension.step_localization import StepLocalizer, prepare_dataset_for_task_verification
 from dataloader.TaskVerificationDataset import TaskVerificationDataset
-from core.models.task_verifier import TaskVerifier, SimpleMLPVerifier
+from core.models.task_verifier import TaskVerifier
 
 def get_recipe_groups(recording_ids, annotations_file='annotations/annotation_json/complete_step_annotations.json'):
     with open(annotations_file, 'r') as f:
@@ -164,7 +164,6 @@ def main():
                         help='Path to split JSON file (if using StepLocalizer)')
     parser.add_argument('--split', type=str, default='train',
                         choices=['train', 'val', 'test'])
-    parser.add_argument('--model_type', type=str, default='transformer')
     parser.add_argument('--embedding_dim', type=int, default=256)
     parser.add_argument('--hidden_dim', type=int, default=512)
     parser.add_argument('--num_heads', type=int, default=8)
@@ -217,10 +216,7 @@ def main():
         
         em_dim = data_dict['embeddings'].shape[2]
         
-        if args.model_type == 'transformer':
-            model = TaskVerifier(embedding_dim=em_dim, hidden_dim=args.hidden_dim, num_heads=args.num_heads, num_layers=args.num_layers, dropout=args.dropout).to(args.device)
-        else:
-            model = SimpleMLPVerifier(embedding_dim=em_dim, hidden_dim=args.hidden_dim, dropout=args.dropout).to(args.device)
+        model = TaskVerifier(embedding_dim=em_dim, hidden_dim=args.hidden_dim, num_heads=args.num_heads, num_layers=args.num_layers, dropout=args.dropout).to(args.device)
             
         criterion = nn.BCELoss()
         optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
@@ -328,7 +324,7 @@ def main():
         'average_metrics': {k: {key: val for key, val in v.items() if key != 'values'} for k, v in avg_metrics.items()},
         'fold_results': all_fold_results
     }
-    res_file = os.path.join(args.save_dir, f"loro_cv_{args.model_type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
+    res_file = os.path.join(args.save_dir, f"loro_cv_transformer_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
     with open(res_file, 'w') as f: json.dump(results, f, indent=2)
     
     df = pd.DataFrame([{**{'fold': f['fold'], 'test_recipe_name': f['test_recipe_name']}, **{f'metric_{m}': v for m, v in f['metrics'].items()}} for f in all_fold_results])
