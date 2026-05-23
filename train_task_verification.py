@@ -90,7 +90,7 @@ def load_precomputed_embeddings(npz_path, annotations_file):
     all_recording_ids = []
     unique_recording_ids = set()
     for key in data.files:
-        if key != 'used_hiero' and not key.endswith('_errors'):
+        if not key.endswith('_errors'):
             unique_recording_ids.add(key)
     
     max_steps_per_video = 0
@@ -146,8 +146,7 @@ def load_precomputed_embeddings(npz_path, annotations_file):
         'embeddings': np.array(all_video_embeddings, dtype=np.float32),
         'labels': np.array(all_video_labels, dtype=int),
         'masks': np.array(all_video_masks, dtype=bool),
-        'recording_ids': all_recording_ids,
-        'used_hiero': data['used_hiero'].item() if 'used_hiero' in data else False
+        'recording_ids': all_recording_ids
     }
 
 def main():

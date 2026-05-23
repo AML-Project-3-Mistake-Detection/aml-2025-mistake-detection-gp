@@ -6,7 +6,7 @@
 
 **Key Features:**
 - LORO CV: Tests on each recipe separately (prevents overfitting to specific recipes)
-- Two model architectures: Transformer (recommended) or MLP (baseline)
+- Transformer architecture with self-attention mechanism
 - Automatic early stopping based on F1 score
 - Comprehensive visualization and metrics export (PNG, JSON, CSV)
 
@@ -28,7 +28,7 @@ Prepare Dataset (normalize, pad, create masks)
   ↓
 LOOP: For Each Recipe (LORO CV)
   ├─ Split: Train on other recipes, Test on this one
-  ├─ Create Model (Transformer or MLP)
+  ├─ Create Model (Transformer encoder)
   ├─ Training Loop (with early stopping)
   ├─ Evaluate on test set
   └─ Save fold results
@@ -53,7 +53,8 @@ END
 | `train_one_epoch(model, dataloader, criterion, optimizer, device)` | Train model for one epoch: forward pass, compute loss, backward pass, update weights | Main training loop |
 | `evaluate(model, dataloader, device, threshold=0.5)` | Evaluate model: compute predictions and metrics (accuracy, precision, recall, F1, AUC) | Main training loop (validation) |
 | `main()` | Orchestrate entire workflow: data loading → LORO CV loop → results aggregation → visualization | Script entry point |
-**Architecture:** Transformer-only (no MLP baseline)
+
+**Note:** Task verification uses **Transformer-only** architecture. The `MLP` classes in `blocks.py` are for error recognition, not task verification.
 ---
 
 ## Detailed Function Descriptions
@@ -77,7 +78,6 @@ END
     'labels': np.array (N_videos,),            # 0=no errors, 1=has errors
     'masks': np.array (N_videos, max_steps),   # True=real, False=padding
     'recording_ids': list of str,               # Video IDs
-    'used_hiero': bool                          # Metadata flag
 }
 ```
 
@@ -266,7 +266,7 @@ Output: (batch_size, 1) ∈ [0, 1]
 ```bash
 python train_task_verification.py \
     --precomputed_embeddings "data/embeddings.npz" \
-    --num_epochs 150 \
+    --num_epochs 100 \
     --batch_size 32 \
     --lr 0.001 \
     --patience 10 \
@@ -283,3 +283,167 @@ python train_task_verification.py \
 - `dataloader/TaskVerificationDataset.py` - PyTorch Dataset class
 - `extension/step_localization.py` - Feature extraction utilities (StepLocalizer)
 - `TASK_VERIFICATION_README.md` - Additional documentation
+
+---
+
+# APPENDIX: Component Summaries
+
+This section summarizes the key components and their methods without full source code.
+
+---
+
+## A. TaskVerifier Model (`core/models/task_verifier.py`)
+
+**Purpose:** Transformer-based binary classification model that predicts whether a recipe execution video contains errors.
+
+**Architecture:**
+- Transformer encoder to process step sequences with self-attention
+- Masked global pooling to aggregate step information (ignoring padding tokens)
+- Binary classification head (MLP with ReLU and Sigmoid)
+
+**Key Parameters:** `embedding_dim=1024`, `hidden_dim=512`, `num_heads=8`, `num_layers=2`, `dropout=0.7`
+
+**Methods:**
+
+| Method | Purpose |
+|--------|---------|
+| `__init__()` | Initialize transformer encoder and classification head |
+| `forward(embeddings, mask)` | Process step embeddings → masked pooling → binary prediction (0-1) |
+| `predict(embeddings, mask, threshold)` | Convert probabilities to binary predictions (0 or 1) |
+| `get_num_parameters()` | Return count of trainable parameters |
+
+---
+
+## B. TaskVerificationDataset (`dataloader/TaskVerificationDataset.py`)
+
+**Purpose:** PyTorch Dataset class for handling step-level embeddings with variable-length sequences and binary video-level labels.
+
+**Data Format:**
+- Input: Embeddings (N, max_steps, embed_dim), labels (N,), masks (N, max_steps), recording IDs
+- Output per sample: Dictionary with embeddings, label, mask, recording_id
+- Handles imbalanced data with class weight computation
+
+**Key Attributes:** `num_samples`, `num_positive`, `num_negative`, `max_steps`, `embed_dim`
+
+**Methods:**
+
+| Method | Purpose |
+|--------|---------|
+| `__init__()` | Initialize with tensors and compute dataset statistics |
+| `__len__()` | Return total number of samples |
+| `__getitem__()` | Return single sample as dict (embeddings, label, mask, id) |
+| `get_class_weights()` | Compute inverse frequency weights for imbalanced data |
+| `get_statistics()` | Return dict with sample count, ratio, step ranges |
+| `print_statistics()` | Print formatted dataset statistics to console |
+| `collate_task_verification()` | Custom collate function for batch preparation |
+
+---
+
+## C. Step Localization (`extension/step_localization.py`)
+
+## C. Step Localization (`extension/step_localization.py`)
+
+**Purpose:** Extract step-level embeddings from video features using either ground truth or predicted boundaries.
+
+**Two Routes:**
+
+### Route A: StepLocalizer (Ground Truth Boundaries)
+
+**Purpose:** Uses GT boundaries from annotations as upper-bound baseline.
+
+**Methods:**
+
+| Method | Purpose |
+|--------|---------|
+| `__init__()` | Load annotations and initialize feature directory |
+| `process_video(recording_id)` | Process single video: load features, extract step embeddings using GT boundaries |
+| `process_all_videos(recording_ids)` | Batch process multiple videos |
+| `get_step_embeddings_matrix(video_data, pad_to_length)` | Return step embeddings as padded matrix with mask |
+| `_extract_step_embedding(features, start, end)` | Average frame features within time boundaries |
+| `_load_features(recording_id)` | Load EgoVLP .npz features for video |
+| `_time_to_frame(time_sec)` | Convert seconds to frame index |
+
+### Route B: PredictedBoundaryLocalizer (Predicted Boundaries)
+
+**Purpose:** Uses predicted boundaries from temporal action detection models (e.g., ActionFormer) for end-to-end evaluation.
+
+**Methods:**
+
+| Method | Purpose |
+|--------|---------|
+| `__init__()` | Initialize with feature directory and optional predictions |
+| `load_predictions_from_file(path)` | Load predictions from JSON file |
+| `set_predictions(dict)` | Set predictions directly from dictionary |
+| `process_video(recording_id, label)` | Process video using predicted boundaries + filtering |
+| `process_all_videos(recording_ids, labels)` | Batch process multiple videos |
+| `_filter_predictions(predictions)` | Apply confidence threshold, NMS, and max limit filters |
+| `_nms(predictions)` | Non-Maximum Suppression to remove overlapping predictions |
+| `_compute_iou(seg1, seg2)` | Compute Intersection-over-Union between temporal segments |
+| `_extract_step_embedding(features, start, end)` | Average frame features within time boundaries |
+
+### Utility Function:
+
+**`prepare_dataset_for_task_verification(localizer, split_file, split)`**
+- Purpose: Prepare padded step embeddings for task verification from split file
+- Returns: Dict with embeddings (N, max_steps, 1024), labels (N,), masks (N, max_steps), recording_ids
+
+### Data Flow:
+
+```
+ROUTE A (GT):
+  Annotations (JSON) ──→ StepLocalizer ──→ Step embeddings
+  Features (NPZ)    ──→                   (averaged over time bounds)
+  
+ROUTE B (Predicted):
+  Predictions (JSON) ──→ PredictedBoundaryLocalizer ──→ Step embeddings
+  Features (NPZ)    ──→ (+ NMS filtering)           (averaged over time bounds)
+```
+
+---
+
+## D. Complete Step Annotations (`annotations/annotation_json/complete_step_annotations.json`)
+
+**Purpose:** JSON file containing frame-by-frame annotations for all cooking videos with step boundaries and error labels.
+
+**Top-Level Structure:**
+- Keys: Recording IDs (e.g., "9_8", "1_7")
+- Values: Video annotation objects with metadata and step array
+
+**Video Annotation Properties:**
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `recording_id` | str | Unique video identifier |
+| `activity_id` | int | Recipe ID (groups videos by task type) |
+| `activity_name` | str | Human-readable recipe name (e.g., "Ramen", "Microwave Egg Sandwich") |
+| `person_id` | int | Which performer executed the task (for ablation studies) |
+| `environment` | int | Kitchen setup ID (different kitchen appearances) |
+| `steps` | list | Array of step objects |
+
+**Step Object Properties:**
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `step_id` | int | Action sequence number (1-12 depending on recipe) |
+| `start_time` | float | Step start timestamp (seconds) |
+| `end_time` | float | Step end timestamp (seconds) |
+| `description` | str | Step instruction with verb prefix (e.g., "Pour-Pour 1 egg into...") |
+| `has_errors` | bool | **GROUND TRUTH**: Does this step contain execution errors? |
+
+**Video-Level Label Derivation:**
+
+```
+video_label = 1 if any(step['has_errors'] for step in steps) else 0
+```
+
+A video is labeled as **"has errors" (1)** if ANY of its steps contain errors; otherwise (0).
+
+**Example Usage Pattern:**
+
+1. Load video "9_8" from annotations
+2. Extract activity_id=2 → "Ramen"
+3. Read steps with their boundaries (start_time, end_time)
+4. Check has_errors for each step
+5. Derive video-level label: 1 if any step has error, else 0
+6. Use recording_id to load corresponding embeddings from NPZ file
+7. Pass to TaskVerificationDataset as input with label

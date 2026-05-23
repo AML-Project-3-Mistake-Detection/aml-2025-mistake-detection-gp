@@ -30,7 +30,7 @@ class TaskVerifier(nn.Module):
     
     def __init__(
         self,
-        embedding_dim=1024,
+        embedding_dim=256,
         hidden_dim=512,
         num_heads=8,
         num_layers=1,
@@ -119,62 +119,6 @@ class TaskVerifier(nn.Module):
             probs = self.forward(step_embeddings, mask)
             preds = (probs > threshold).long()
         return preds
-    
-    def get_num_parameters(self):
-        """Return the number of trainable parameters."""
-        return sum(p.numel() for p in self.parameters() if p.requires_grad)
-
-
-class SimpleMLPVerifier(nn.Module):
-    """
-    Simple MLP baseline for task verification.
-    Uses average pooling followed by MLP classification.
-    
-    This is a simpler alternative to the transformer-based TaskVerifier.
-    """
-    
-    def __init__(self, embedding_dim=1024, hidden_dim=512, dropout=0.3):
-        super().__init__()
-        
-        self.embedding_dim = embedding_dim
-        self.hidden_dim = hidden_dim
-        
-        # MLP classifier
-        self.classifier = nn.Sequential(
-            nn.Linear(embedding_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, hidden_dim // 2),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim // 2, 1),
-            nn.Sigmoid()
-        )
-    
-    def forward(self, step_embeddings, mask=None):
-        """
-        Forward pass with simple average pooling.
-        
-        Args:
-            step_embeddings: (batch_size, num_steps, embedding_dim)
-            mask: (batch_size, num_steps) boolean mask, optional
-        
-        Returns:
-            predictions: (batch_size, 1)
-        """
-        # Handle NaN values
-        step_embeddings = torch.nan_to_num(step_embeddings, nan=0.0)
-        
-        # Average pooling with mask
-        if mask is not None:
-            mask = mask.unsqueeze(-1).float()
-            pooled = (step_embeddings * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1)
-        else:
-            pooled = step_embeddings.mean(dim=1)
-        
-        # Classification
-        output = self.classifier(pooled)
-        return output
     
     def get_num_parameters(self):
         """Return the number of trainable parameters."""
