@@ -14,7 +14,6 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-from extension.step_localization import StepLocalizer, prepare_dataset_for_task_verification
 from dataloader.TaskVerificationDataset import TaskVerificationDataset
 from core.models.task_verifier import TaskVerifier
 
